@@ -1,13 +1,8 @@
 # Semana 11 — Testes de integração com Spring Boot e JUnit 5
 
-> ⚠️ **ENTREGA INCOMPLETA** — apenas o **Exercício 1** (CT01, CT02 e CT03) foi resolvido.
-> O **Exercício 2** (CT04 e CT05 — `ProdutoControllerIntegrationTest`) **ainda não foi feito**:
-> os métodos continuam com `TODO` e, por estarem vazios, aparecem como "passando" no `mvn test`,
-> mas não verificam nada.
-
 O enunciado original da atividade está em [ENUNCIADO.md](ENUNCIADO.md).
 
-**Tecnologias:** Java 17+, Maven, Spring Boot 3.3, Spring Data JPA, H2 (em memória), JUnit 5.
+**Tecnologias:** Java 17+, Maven, Spring Boot 3.3, Spring Data JPA, H2 (em memória), JUnit 5 e MockMvc.
 
 ## Status
 
@@ -16,15 +11,18 @@ O enunciado original da atividade está em [ENUNCIADO.md](ENUNCIADO.md).
 | 1 | CT01 — Cadastro válido | `deveCadastrarERecuperarProduto` | ✅ Feito |
 | 1 | CT02 — Nome inválido | `naoDevePersistirProdutoComNomeEmBranco` | ✅ Feito |
 | 1 | CT03 — Atualização (desafio) | `deveAtualizarPrecoPersistido` | ✅ Feito |
-| 2 | CT04 — Cadastro via API | `deveCadastrarProdutoPelaApi` | ❌ Pendente |
-| 2 | CT05 — Consulta via API | `deveBuscarProdutoPelaApi` | ❌ Pendente |
+| 2 | CT04 — Cadastro via API | `deveCadastrarProdutoPelaApi` | ✅ Feito |
+| 2 | CT05 — Consulta via API | `deveBuscarProdutoPelaApi` | ✅ Feito |
+
+Nenhum mock é usado em nenhum dos exercícios: `ProdutoService` e `ProdutoRepository` são os beans
+reais, e os dados são gravados no banco H2 em memória.
 
 ## Exercício 1 — Service + Repository + H2
 
 Arquivo: [`ProdutoServiceIntegrationTest.java`](src/test/java/br/edu/exemplo/ProdutoServiceIntegrationTest.java)
 
-Nenhum mock é usado: o teste sobe o contexto Spring completo (`@SpringBootTest`), injeta o
-`ProdutoService` e o `ProdutoRepository` reais (`@Autowired`) e grava no banco H2 em memória.
+O teste sobe o contexto Spring completo (`@SpringBootTest`) e injeta o `ProdutoService` e o
+`ProdutoRepository` reais (`@Autowired`).
 
 - **CT01 — Cadastro válido:** cadastra `Teclado` por `150.0` pelo serviço, verifica com
   `assertNotNull` que o produto recebeu ID e então busca pelo `repository.findById()`,
@@ -58,7 +56,53 @@ resultado (por exemplo, a contagem do CT02).
 
 ## Exercício 2 — Integração HTTP com MockMvc
 
-> ❌ **Ainda não implementado.**
+Arquivo: [`ProdutoControllerIntegrationTest.java`](src/test/java/br/edu/exemplo/ProdutoControllerIntegrationTest.java)
+
+A classe usa `@SpringBootTest` + `@AutoConfigureMockMvc` + `@Transactional`, e as requisições são
+feitas com `mockMvc.perform(...)`.
+
+- **CT04 — Cadastro via API:** `POST /produtos` com `{"nome":"Mouse","preco":80.0}` e
+  `contentType(MediaType.APPLICATION_JSON)`. Verifica `status().isOk()` (HTTP 200) e, com `jsonPath`,
+  que `$.id` é numérico, `$.nome` é `Mouse` e `$.preco` é `80.0`.
+- **CT05 — Consulta via API:** faz um `POST /produtos` cadastrando `Teclado` por `150.0`, captura o
+  corpo da resposta com `andReturn().getResponse().getContentAsString()` e extrai o ID com
+  `ObjectMapper.readTree(...)` (`JsonNode`). Depois executa `GET /produtos/{id}` e confere HTTP 200
+  e que `id`, `nome` e `preco` do JSON batem com o produto cadastrado.
+
+Para garantir que os testes realmente verificam algo, os valores esperados foram trocados
+temporariamente (nome `Errado`, preço `81.0`) e os dois testes falharam como esperado
+(`JSON path "$.nome" expected:<Errado> but was:<Teclado>`); depois os valores corretos foram restaurados.
+
+### Discussão
+
+**Quais componentes são efetivamente exercitados?**
+O fluxo completo da aplicação: o `DispatcherServlet` do Spring MVC (roteamento da URL para o método),
+a desserialização do JSON da requisição para `ProdutoRequest` e a serialização do `Produto` de volta
+para JSON (Jackson), o `ProdutoController`, as regras do `ProdutoService`, o `ProdutoRepository`
+(Spring Data JPA / Hibernate) e o banco H2. Só o servidor HTTP e a rede ficam de fora.
+
+**Por que o MockMvc não precisa iniciar um servidor HTTP real?**
+O MockMvc cria objetos de requisição e resposta simulados (`MockHttpServletRequest` /
+`MockHttpServletResponse`) e os entrega diretamente ao `DispatcherServlet` dentro da mesma JVM.
+Como `@SpringBootTest` usa por padrão um ambiente web "mock" (`WebEnvironment.MOCK`), nenhum Tomcat é
+iniciado e nenhuma porta é aberta — o teste fica mais rápido e sem conflito de portas, mas toda a
+camada web do Spring é executada normalmente.
+
+**Qual é a diferença entre esse teste e um teste unitário do controller com dependências simuladas?**
+Num teste unitário (por exemplo, `@WebMvcTest` com o `ProdutoService` substituído por um mock), só o
+controller é testado: o retorno do serviço é inventado pelo próprio teste, então ele não detecta
+erros na regra de negócio, no mapeamento JPA ou na persistência. Ele é mais rápido e isola falhas no
+controller. Já o teste de integração usa os componentes reais e o banco, então prova que as camadas
+funcionam **juntas** (o produto é realmente salvo e depois recuperado pelo GET), ao custo de ser mais
+lento e de uma falha poder vir de qualquer camada.
+
+### Isolamento entre os testes
+
+As duas classes de teste são anotadas com `@Transactional`. Inclusive no Exercício 2 isso funciona,
+porque o MockMvc executa a requisição **na mesma thread** do teste: o controller, o serviço e o
+repositório participam da transação aberta pelo teste, que sofre rollback ao final. Nenhum produto
+cadastrado em um teste fica visível para outro. O banco H2 é em memória
+(`jdbc:h2:mem:produtos`) e o schema é criado/destruído pelo Hibernate (`ddl-auto=create-drop`).
 
 ## Execução
 
@@ -77,6 +121,3 @@ Tests run: 2, Failures: 0, Errors: 0, Skipped: 0 -- in br.edu.exemplo.ProdutoCon
 Tests run: 5, Failures: 0, Errors: 0, Skipped: 0
 BUILD SUCCESS
 ```
-
-Observação: os 2 testes de `ProdutoControllerIntegrationTest` passam apenas porque ainda estão vazios
-(Exercício 2 pendente). Os 3 testes do Exercício 1 contêm asserções reais e passam.

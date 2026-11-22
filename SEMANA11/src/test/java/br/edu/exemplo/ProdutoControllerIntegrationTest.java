@@ -1,4 +1,6 @@
 package br.edu.exemplo;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -11,12 +13,34 @@ import org.springframework.http.MediaType;
 @SpringBootTest @AutoConfigureMockMvc @Transactional
 class ProdutoControllerIntegrationTest {
  @Autowired MockMvc mockMvc;
+ @Autowired ObjectMapper objectMapper;
+
+ // CT04 — Cadastro via API
  @Test void deveCadastrarProdutoPelaApi() throws Exception {
-  // TODO EX2: POST /produtos com JSON {"nome":"Mouse","preco":80.0}
-  // Verificar HTTP 200, ID numérico, nome e preço no JSON de resposta.
+  mockMvc.perform(post("/produtos")
+     .contentType(MediaType.APPLICATION_JSON)
+     .content("{\"nome\":\"Mouse\",\"preco\":80.0}"))
+   .andExpect(status().isOk())
+   .andExpect(jsonPath("$.id").isNumber())
+   .andExpect(jsonPath("$.nome").value("Mouse"))
+   .andExpect(jsonPath("$.preco").value(80.0));
  }
+
+ // CT05 — Consulta via API
  @Test void deveBuscarProdutoPelaApi() throws Exception {
-  // TODO EX2: cadastrar por POST, extrair o ID da resposta,
-  // executar GET /produtos/{id} e conferir os dados retornados.
+  String respostaPost = mockMvc.perform(post("/produtos")
+     .contentType(MediaType.APPLICATION_JSON)
+     .content("{\"nome\":\"Teclado\",\"preco\":150.0}"))
+   .andExpect(status().isOk())
+   .andReturn().getResponse().getContentAsString();
+
+  JsonNode json = objectMapper.readTree(respostaPost);
+  long id = json.get("id").asLong();
+
+  mockMvc.perform(get("/produtos/{id}", id))
+   .andExpect(status().isOk())
+   .andExpect(jsonPath("$.id").value(id))
+   .andExpect(jsonPath("$.nome").value("Teclado"))
+   .andExpect(jsonPath("$.preco").value(150.0));
  }
 }
